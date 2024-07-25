@@ -118,6 +118,85 @@ def main(directory, interactive=False, debug=False):
             else:
                 print("No files were deleted.")
 
+
+def get_user_choice(files):
+    """Present files to user and get their choice."""
+    for i, file in enumerate(files, 1):
+        size = get_file_size(file)
+        print(f"{i}: {file} ({size})")
+
+    choices = "/".join([str(i) for i in range(1, len(files)+1)])
+    while True:
+        try:
+            choice = input(f"Do you want to delete {files[0]}? (y/n/{choices}) ").strip().lower()
+            if choice in ['y', 'n'] or all(c in '123456789' for c in choice):
+                return choice
+            print("Invalid input. Please try again.")
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user.")
+            return 'abort'
+
+
+def interactive_delete(duplicates):
+    """Interactively ask the user for confirmation to delete files."""
+    for checksum, files in duplicates.items():
+        print("\nDuplicate files found:")
+        choice = get_user_choice(files)
+
+        if choice == 'abort':
+            return False  # Signal to main function that we're aborting
+
+        if choice == 'n':
+            print("Skipped all files in this group.")
+            continue
+
+        files_to_delete = []
+        if choice == 'y':
+            files_to_delete = [files[0]]
+        else:
+            for index in choice:
+                files_to_delete.append(files[int(index) - 1])
+
+        for file in files_to_delete:
+            try:
+                os.remove(file)
+                print(f"Deleted: {file}")
+            except FileNotFoundError:
+                print(f"File not found: {file}")
+            except Exception as e:
+                print(f"Error deleting file {file}: {e}")
+
+    return True  # Signal successful completion
+
+def main(directory, interactive=False, debug=False):
+    try:
+        duplicates = find_duplicates(directory)
+        if not duplicates:
+            print("No duplicate files found.")
+            return
+        
+        if interactive:
+            print("Interactive mode enabled.")
+            if not interactive_delete(duplicates):
+                return
+        else:
+            files_to_delete = prioritize_deletion(duplicates, debug)
+            if files_to_delete:
+                print("Files proposed for deletion:")
+                for file in files_to_delete:
+                    print(file)
+                
+                confirmation = input("Are you sure you want to delete these files? (y/n) ").strip().lower()
+                if confirmation == 'y':
+                    delete_files(files_to_delete)
+                else:
+                    print("No files were deleted.")
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
 if __name__ == "__main__":
     parser = ArgumentParser(description="Find and delete duplicate files.")
     parser.add_argument('directory', nargs='?', default='.', help="Directory to scan for duplicate files.")
@@ -126,3 +205,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args.directory, interactive=args.interactive, debug=args.debug)
+
+
