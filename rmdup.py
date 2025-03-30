@@ -24,7 +24,19 @@ from argparse import ArgumentParser
 
 
 def get_human_size(size_bytes):
-    """Convert bytes to human readable format."""
+    """
+    Convert a byte count into a human-readable size string.
+    
+    Given an integer representing a number of bytes, this function determines the
+    most appropriate unit (B, KB, MB, etc.) and formats the value to two decimal
+    places. It returns "0 B" when the input is zero.
+    
+    Args:
+        size_bytes (int): The size in bytes.
+    
+    Returns:
+        str: The formatted size with its corresponding unit.
+    """
     if size_bytes == 0:
         return "0 B"
     size_names = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
@@ -35,7 +47,15 @@ def get_human_size(size_bytes):
 
 
 def parse_size(size_str):
-    """Parse a human-readable size string (like '5MB', '5M', or '2.5GB') into bytes."""
+    """
+    Convert a human-readable file size string to bytes.
+    
+    This function parses a size string (e.g., "5MB", "5M", or "2.5GB"), ignoring spaces and
+    extracting the numeric value and unit. Supported units include bytes ("B"), kilobytes
+    ("K" or "KB"), megabytes ("M" or "MB"), gigabytes ("G" or "GB"), and terabytes ("T" or "TB").
+    If no unit is provided, the size is assumed to be in bytes. An empty string returns 0.
+    Raises a ValueError if the size format is invalid or if an unrecognized unit is encountered.
+    """
     if not size_str:
         return 0
     
@@ -94,6 +114,20 @@ class ProgressBar:
     """A text-based progress bar."""
     
     def __init__(self, total, width=50, prefix='Progress:', suffix='Complete', verbose=False):
+        """
+        Initialize a new ProgressBar instance.
+        
+        Sets up the progress bar with a total step count, display width, and customizable
+        text labels for prefix and suffix. Also initializes internal counters and timing
+        for progress tracking. The optional verbose flag enables additional output details.
+            
+        Parameters:
+            total: Total number of steps for progress tracking.
+            width: Width of the progress bar in characters (default: 50).
+            prefix: Label shown before the progress bar (default: 'Progress:').
+            suffix: Label shown after the progress bar (default: 'Complete').
+            verbose: If True, enables detailed progress reporting.
+        """
         self.total = total
         self.width = width
         self.prefix = prefix
@@ -107,6 +141,18 @@ class ProgressBar:
         self.bar_visible = False
         
     def update(self, progress):
+        """
+        Update the progress bar with the given progress increment.
+        
+        Adds the specified progress to the current count and refreshes the progress bar 
+        display if at least 0.1 seconds have passed or the total progress is reached. The 
+        display shows the percentage complete, a visual bar, the current processing speed 
+        (in MB/s), and an estimate of the remaining time (or elapsed time when finished). In 
+        verbose mode, the progress bar is updated only upon completion.
+          
+        Args:
+            progress: Incremental value to add to the current progress count.
+        """
         self.count += progress
         current_time = time.time()
         
@@ -142,7 +188,14 @@ class ProgressBar:
             self.last_update = current_time
     
     def set_description(self, description):
-        """Set the current file being processed."""
+        """
+        Set the current file description for verbose progress output.
+        
+        Updates the internal state with the file being processed. If verbose mode
+        is enabled, the method ensures that any previously displayed progress bar is
+        terminated by inserting a newline and then prints "Processing:" followed by the
+        basename of the current file without moving to a new line.
+        """
         self.current_file = description
         # Only display the file in verbose mode
         if self.verbose and self.current_file:
@@ -156,7 +209,13 @@ class ProgressBar:
             sys.stdout.flush()
     
     def close(self):
-        """Finish the progress bar."""
+        """
+        Finalize the progress bar display.
+        
+        Ensures that the progress bar output ends cleanly by writing a newline if the
+        bar is visible. Additionally, inserts an extra blank line when not in verbose mode
+        and flushes the standard output to render all content promptly.
+        """
         # Always make sure we're on a new line when done
         if self.bar_visible:
             sys.stdout.write('\n')
@@ -169,7 +228,26 @@ class ProgressBar:
 
 
 def get_md5(file_path, pbar=None, verbose=False, follow_links=False):
-    """Calculate the MD5 checksum of a file."""
+    """
+    Compute the MD5 checksum of a file.
+    
+    This function reads the file in binary mode in chunks to compute its MD5 hash.
+    If a progress bar is provided, it updates the bar with the number of bytes read
+    and sets its description to the current file. When the file is a symlink and
+    follow_links is False, the file is skipped and None is returned. If errors
+    occur during file access (e.g., PermissionError or OSError), an optional
+    verbose message is printed and None is returned.
+    
+    Args:
+        file_path: Path to the file to process.
+        pbar: Optional progress bar object with update and set_description methods.
+        verbose: If True, prints messages for skipped symlinks and file access errors.
+        follow_links: If False, symlinks are not followed and are skipped.
+    
+    Returns:
+        The MD5 checksum as a hexadecimal string, or None if the file is skipped or
+        an error occurs.
+    """
     hash_md5 = hashlib.md5()
     try:
         # If it's a symlink and we're not following links, handle differently
@@ -202,7 +280,14 @@ def get_md5(file_path, pbar=None, verbose=False, follow_links=False):
 
 
 def get_file_size(file_path):
-    """Get the size of a file in a human-readable format."""
+    """
+    Return the size of a file as a human-readable string.
+    
+    The file size is obtained using os.path.getsize and is converted to the most
+    appropriate unit (B, KB, MB, GB, or TB) with two decimal places of precision.
+    If the file cannot be accessed due to permission or OS errors, the function
+    returns "Unknown size".
+    """
     try:
         size = os.path.getsize(file_path)
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -215,7 +300,26 @@ def get_file_size(file_path):
 
 
 def find_duplicates(directory, debug=False, verbose=False, follow_links=False, min_size=0):
-    """Find duplicate files in the specified directory."""
+    """
+    Recursively locate duplicate files based on MD5 checksums.
+    
+    This function traverses the specified directory recursively, skipping symbolic
+    links (unless follow_links is True) and ignoring files smaller than the given
+    min_size. It computes an MD5 checksum for each eligible file and groups files
+    sharing the same checksum as duplicates. Optional progress feedback is provided
+    via console messages and a progress bar for large data sets.
+    
+    Args:
+        directory: The path of the directory to search.
+        debug: Enable debug output for detailed processing information (default is False).
+        verbose: Enable verbose output for additional status messages (default is False).
+        follow_links: If True, symbolic links will be followed; otherwise, they are skipped (default is False).
+        min_size: Minimum file size in bytes for a file to be processed (default is 0).
+    
+    Returns:
+        A dictionary mapping MD5 checksums to lists of file paths. Only keys with
+        more than one associated file (i.e., duplicates) are included.
+    """
     checksums = defaultdict(list)
     
     # First, gather all files to check
@@ -295,7 +399,25 @@ def find_duplicates(directory, debug=False, verbose=False, follow_links=False, m
 
 
 def delete_files(files, follow_links=False):
-    """Actually delete the files."""
+    """
+        Delete files and output a deletion summary.
+    
+        This function iterates over a list of file paths, attempting to delete each
+        file while keeping track of the total number of files removed and the total
+        disk space freed. For each file, it retrieves the file size (if accessible)
+        before deletion. If a file is a symbolic link and follow_links is False, it
+        is skipped. The function prints messages for each deletion action, including
+        any errors or skipped files, and finally prints a summary.
+    
+        Args:
+            files: List of file paths to delete.
+            follow_links: If False, symbolic links are not deleted (default is False).
+    
+        Returns:
+            tuple: A tuple (total_deleted, total_bytes_saved) where total_deleted is
+            the count of files successfully removed and total_bytes_saved is the total
+            number of bytes freed.
+        """
     total_deleted = 0
     total_bytes_saved = 0
     
@@ -333,7 +455,25 @@ def delete_files(files, follow_links=False):
 
 
 def prioritize_deletion(duplicates, debug=False):
-    """Prioritize files with parentheses for deletion and prefer keeping older files."""
+    """
+    Determines which duplicate files to delete based on naming conventions and file age.
+    
+    This function processes groups of duplicate file paths provided as a dictionary where each key
+    is a file checksum and each value is a list of duplicate file paths. It prioritizes deletion of
+    files whose names contain parentheses by attempting to pair them with a duplicate lacking
+    parentheses. If no such file exists within a group, the function sorts the files by modification
+    time, retaining the oldest file and marking the remaining files for deletion.
+    Debug information is printed if the debug flag is enabled.
+    
+    Args:
+        duplicates: A dictionary mapping file checksums to lists of duplicate file paths.
+        debug: A boolean flag that, when True, enables debug output.
+    
+    Returns:
+        A tuple containing:
+          - A list of file paths selected for deletion.
+          - A dictionary mapping each file marked for deletion to a retained file in the duplicate group.
+    """
     files_to_delete = []
     # Keep track of which files match with which
     match_info = {}
@@ -381,7 +521,11 @@ def prioritize_deletion(duplicates, debug=False):
 
 
 def get_file_info(file_path):
-    """Get detailed file information including size and modification time."""
+    """
+    Returns a string summarizing a file's size and last modification time.
+    
+    The returned string is formatted as "<size>, modified: <YYYY-MM-DD HH:MM:SS>", where the size is obtained from get_file_size and the timestamp is derived from the file's last modification time. If the file cannot be accessed due to permission or OS errors, the function returns "Unknown info".
+    """
     try:
         size = get_file_size(file_path)
         mtime = os.path.getmtime(file_path)
@@ -392,7 +536,17 @@ def get_file_info(file_path):
 
 
 def get_user_choice(files):
-    """Show files to user and ask them what to delete."""
+    """
+    Prompt the user to choose duplicate files for deletion.
+    
+    Displays a sorted list of file paths based on their modification time, with the oldest file marked. The user may select files to delete by entering the corresponding numbers, specify 'all' to delete all files except the oldest, or enter 'none' (or simply press Enter) to keep all files. The function continues to prompt until valid input is provided or the operation is interrupted.
+    
+    Args:
+        files: An iterable of file paths representing duplicate files.
+    
+    Returns:
+        A list of file paths chosen for deletion.
+    """
     # Sort files by modification time, oldest first
     sorted_files = sorted(files, key=lambda p: os.path.getmtime(p))
     
@@ -436,7 +590,22 @@ def get_user_choice(files):
 
 
 def interactive_delete(duplicates, follow_links=False):
-    """Interactively ask the user for confirmation to delete files."""
+    """
+    Interactively delete selected duplicate files.
+    
+    Iterates over groups of duplicate files (grouped by checksum) and displays a sample from
+    the first file in each group to assist identification. Prompts the user to choose which
+    files to delete and requests final confirmation for each group. Symbolic links are skipped
+    unless follow_links is True. A summary of deletions and total disk space freed is displayed,
+    and the process can be cancelled by the user.
+    
+    Args:
+        duplicates: Dictionary mapping file checksums to lists of duplicate file paths.
+        follow_links: Boolean flag indicating whether to process symbolic links.
+    
+    Returns:
+        bool: True if the deletion process completes without interruption; False if cancelled.
+    """
     total_deleted = 0
     total_bytes_saved = 0
     
@@ -526,6 +695,24 @@ def interactive_delete(duplicates, follow_links=False):
 
 
 def main(directory, interactive=False, debug=False, verbose=False, follow_links=False, min_size=0):
+    """
+    Orchestrates duplicate file detection and deletion.
+    
+    Scans the specified directory for duplicate files that meet a minimum size criterion and
+    manages their deletion. In interactive mode, the function prompts the user to confirm deletion
+    for each duplicate group; otherwise, it proposes files for deletion based on prioritization rules.
+    The debug and verbose flags control the level of output during execution, and the follow_links flag
+    determines whether symbolic links are processed. The operation terminates gracefully if no
+    duplicates are found or if the user interrupts the process.
+    
+    Args:
+        directory: The path to the directory to search for duplicates.
+        interactive: If True, enables interactive deletion mode.
+        debug: If True, outputs additional debug information.
+        verbose: If True, displays extra progress and status messages.
+        follow_links: If True, follows symbolic links while scanning.
+        min_size: The minimum file size in bytes for a file to be considered.
+    """
     try:
         duplicates = find_duplicates(directory, debug, verbose, follow_links, min_size)
         
