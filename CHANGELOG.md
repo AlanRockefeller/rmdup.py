@@ -1,5 +1,33 @@
 # Changelog
 
+## Version 1.2.0 - April 15, 2025
+
+### Added
+- **Comprehensive Unit Tests:** Introduced a new test suite (`test_rmdup.py`) with `unittest` to cover key functionalities including argument parsing (`parse_size`), size formatting (`get_human_size`), deletion prioritization (`prioritize_deletion`), and MD5 calculation (`get_md5`).
+- **Content Sample Refinement (Interactive Mode):**
+    - Smarter detection of binary/unrenderable content for file samples.
+    - Displays a generic message (e.g., "Binary file or unrenderable content") instead of garbled text if a high percentage of replacement characters is detected in the UTF-8 decoded sample.
+
+### Changed
+- **Argument Parsing for `--min-size` / `-s`:** Internally refactored for improved robustness and direct use of `argparse` capabilities, maintaining existing user-facing syntax.
+- **File Deletion Prioritization Logic (`prioritize_deletion`):**
+    - Enhanced the logic to more reliably select a single "best" file to keep from duplicate sets.
+    - The primary kept candidate is the oldest file that does not have parentheses in its filename.
+    - If all files have parentheses or none do, the oldest among them is kept.
+    - `match_info` now consistently maps each deleted file to the single kept master file.
+- **Interactive Mode (`interactive_delete` & `get_user_choice`):**
+    - Now clearly highlights a "[recommended to keep]" file in each duplicate group, based on the refined prioritization logic.
+    - The "all" option in the deletion prompt now correctly means "delete all except the recommended file."
+- **Output Messages (Non-Interactive Mode):** Improved clarity of messages when listing files proposed for deletion, indicating *why* a file is kept (e.g., older, no parentheses).
+- **Verbose Logging:** Refined interaction between progress bar and verbose messages for cleaner output. `ProgressBar.set_description` now ensures its verbose output ends with a newline.
+- **Symlink Logging:** Messages for skipping symlinks now include "(not following)" for better clarity.
+
+### Removed
+- **`get_file_size` function:** This function (which returned human-readable size strings) was removed after its usages were refactored to use `os.path.getsize` combined with `get_human_size`.
+
+### Fixed
+- Minor code style issues and clarity by introducing constants for magic numbers (e.g., `DEFAULT_CHUNK_SIZE`, `CONTENT_SAMPLE_SIZE`).
+
 ## Version 1.1 - March 30, 2025
 
 ### Added

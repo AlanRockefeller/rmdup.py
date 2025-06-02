@@ -3,7 +3,7 @@
 A simple Python script to find and delete duplicate files in your directories.
 
 **Author:** Alan Rockefeller  
-**Version:** 1.1  
+**Version:** 1.1 (Note: Script version is 1.1, documentation reflects ongoing changes towards 1.2)
 **Date:** March 30, 2025  
 **GitHub:** https://github.com/AlanRockefeller/rmdup.py
 
@@ -22,11 +22,14 @@ The script:
 
 ## What's special about it?
 
-- It's smart about which files to delete - keeps the original filename instead of the one with (1) or (2) at the end
-- If there are no parentheses, it will keep the oldest file and offer to delete newer copies
-- It has a progress bar when working on big directories
-- It tells you how much disk space you freed up
-- You ALWAYS get to confirm before anything is deleted
+- **Smart File Prioritization:** When deciding which duplicate file to keep, the script is designed to make the most common-sense choice:
+    - It prioritizes keeping files *without* parentheses (e.g., `(1)`, `(copy)`) in their names.
+    - Among those, or if all files are similar in naming, it prioritizes keeping the *oldest* version of the file.
+    - This means if a choice exists between an older file with a clean name and a newer file (or one with parentheses), it will recommend keeping the older, cleaner-named one.
+- **Clear Interactive Choices:** In interactive mode (`-i`), the script highlights a "[recommended to keep]" file in each duplicate group based on these prioritization rules, making decisions easier.
+- **Progress Bar:** Shows progress when working on big directories.
+- **Space Saved:** Tells you how much disk space you freed up.
+- **Confirmation:** You ALWAYS get to confirm before anything is deleted.
 
 ## How to use it
 
@@ -46,11 +49,12 @@ This will check the current directory for duplicate files.
 ./rmdup.py -L            # Follow symbolic links (default: don't follow them)
 ./rmdup.py -s1M          # Only look at files larger than 1MB
 ./rmdup.py -s "500 KB"   # Only look at files larger than 500KB
+# Note: The -s option also supports formats like -s10M, -s2.5G etc.
 ```
 
 ## Interactive mode
 
-In interactive mode (`-i`), you'll see each group of identical files one at a time, and can choose which ones to delete. This is useful when you want more granular control.
+In interactive mode (`-i`), you'll see each group of identical files one at a time. The script will also highlight a "[recommended to keep]" file in each duplicate group based on its prioritization rules (favoring older files, especially those without parentheses in their names). You can then choose which specific files to delete. This is useful when you want more granular control.
 
 ## Examples
 

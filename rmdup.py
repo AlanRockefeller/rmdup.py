@@ -13,6 +13,12 @@ SCRIPT_VERSION = "1.1"
 SCRIPT_DATE = "March 30, 2025"
 AUTHOR = "Alan Rockefeller"
 
+# --- Constants ---
+DEFAULT_CHUNK_SIZE = 4096
+CONTENT_SAMPLE_SIZE = 100
+PROGRESS_BAR_FILE_THRESHOLD = 250
+PROGRESS_BAR_SIZE_THRESHOLD_BYTES = 250 * 1024 * 1024 # 250 MB
+
 import os
 import hashlib
 import sys
@@ -152,8 +158,8 @@ class ProgressBar:
                 self.bar_visible = False
                 
             # Show processing message
-            print(f"Processing: {os.path.basename(self.current_file)}", end='')
-            sys.stdout.flush()
+            print(f"Processing: {os.path.basename(self.current_file)}") # Ensure newline in verbose
+            # sys.stdout.flush() # Generally not needed after a print() with newline
     
     def close(self):
         """Finish the progress bar."""
@@ -175,18 +181,18 @@ def get_md5(file_path, pbar=None, verbose=False, follow_links=False):
         # If it's a symlink and we're not following links, handle differently
         if os.path.islink(file_path) and not follow_links:
             if verbose:
-                print(f"Skipping symlink: {file_path}")
+                print(f"Skipping symlink (not following): {file_path}")
             return None
             
         with open(file_path, 'rb') as f:
             file_size = os.path.getsize(file_path)
-            chunk_size = 4096
+            # chunk_size = 4096 # Replaced by DEFAULT_CHUNK_SIZE
             
             if pbar:
                 # Update the progress bar description to show current file
                 pbar.set_description(file_path)
             
-            for chunk in iter(lambda: f.read(chunk_size), b""):
+            for chunk in iter(lambda: f.read(DEFAULT_CHUNK_SIZE), b""):
                 hash_md5.update(chunk)
                 if pbar:
                     pbar.update(len(chunk))
@@ -199,19 +205,6 @@ def get_md5(file_path, pbar=None, verbose=False, follow_links=False):
     if verbose:
         print(f"MD5 {checksum} - {file_path}")
     return checksum
-
-
-def get_file_size(file_path):
-    """Get the size of a file in a human-readable format."""
-    try:
-        size = os.path.getsize(file_path)
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024:
-                return f"{size:.2f} {unit}"
-            size /= 1024
-        return f"{size:.2f} TB"
-    except (PermissionError, OSError):
-        return "Unknown size"
 
 
 def find_duplicates(directory, debug=False, verbose=False, follow_links=False, min_size=0):
@@ -233,7 +226,7 @@ def find_duplicates(directory, debug=False, verbose=False, follow_links=False, m
                 # Skip symlinks if not following links (unless they're directory symlinks already handled by os.walk)
                 if os.path.islink(file_path) and not follow_links:
                     if verbose:
-                        print(f"Skipping symlink: {file_path}")
+                        print(f"Skipping symlink (not following): {file_path}")
                     continue
                 
                 file_size = os.path.getsize(file_path)
@@ -259,8 +252,9 @@ def find_duplicates(directory, debug=False, verbose=False, follow_links=False, m
     if skipped_count > 0:
         print(f"Skipped {skipped_count} files below size threshold ({get_human_size(skipped_size)}) of files")
     
-    # Show progress if total file size is larger than 250 MB OR if there are more than 250 files
-    use_progress = (total_size > 250 * 1024 * 1024) or (len(all_files) > 250)
+    # Show progress if total file size is larger than threshold OR if there are more than threshold files
+    use_progress = (total_size > PROGRESS_BAR_SIZE_THRESHOLD_BYTES) or \
+                   (len(all_files) > PROGRESS_BAR_FILE_THRESHOLD)
     
     if use_progress:
         print(f"Need to process {len(all_files)} files totaling {total_size / (1024 * 1024):.2f} MB")
@@ -303,7 +297,7 @@ def delete_files(files, follow_links=False):
         try:
             # Handle symlinks specially if not following links
             if os.path.islink(file) and not follow_links:
-                print(f"Skipping symlink: {file}")
+                print(f"Skipping symlink (not following): {file}")
                 continue
             
             # Get file size before deletion
@@ -333,87 +327,156 @@ def delete_files(files, follow_links=False):
 
 
 def prioritize_deletion(duplicates, debug=False):
-    """Prioritize files with parentheses for deletion and prefer keeping older files."""
-    files_to_delete = []
-    # Keep track of which files match with which
-    match_info = {}
-    
+    """
+    Prioritize which duplicate files to delete, aiming to keep the best single copy.
+    The "best" copy is typically the oldest file that does not have parentheses in its name.
+    """
+    all_files_to_delete = []
+    match_info = {}  # Maps deleted_file_path -> kept_file_path
+
     for checksum, paths in duplicates.items():
+        if not paths:
+            continue
+
         if debug:
-            print("Paths in current group:", paths)
+            print(f"\nProcessing group for checksum: {checksum}")
+            print(f"Paths in current group: {paths}")
 
-        # First check for files with parentheses
-        with_parentheses = [p for p in paths if any(char in '()' for char in os.path.basename(p))]
-        
-        if with_parentheses:
-            # If we have files with parentheses, prefer to delete those
-            for p in with_parentheses:
-                # Find a matching file without parentheses if possible
-                non_paren_files = [f for f in paths if f != p and not any(char in '()' for char in os.path.basename(f))]
-                if non_paren_files:
-                    match_info[p] = non_paren_files[0]  # Match with first non-parenthesis file
-                else:
-                    # If all are parentheses, match with another parenthesis file
-                    other_files = [f for f in paths if f != p]
-                    if other_files:
-                        match_info[p] = other_files[0]
-            
-            files_to_delete.extend(with_parentheses)
-            if debug:
-                print("Files with parentheses to delete:", with_parentheses)
+        # Separate files by parenthesis in basename
+        with_paren = []
+        without_paren = []
+        for p in paths:
+            if any(char in '()' for char in os.path.basename(p)):
+                with_paren.append(p)
+            else:
+                without_paren.append(p)
+
+        if debug:
+            print(f"Files without parentheses: {without_paren}")
+            print(f"Files with parentheses: {with_paren}")
+
+        file_to_keep = None
+        current_group_files_to_delete = []
+
+        if without_paren:
+            # Scenario 1: At least one file without parentheses. Keep the oldest of these.
+            without_paren.sort(key=lambda p: os.path.getmtime(p))
+            file_to_keep = without_paren[0]
+            current_group_files_to_delete.extend(without_paren[1:]) # Add newer non-parenthesis files
+            current_group_files_to_delete.extend(with_paren)      # Add all parenthesis files
         else:
-            # Sort files by modification time, oldest first
-            sorted_by_time = sorted(paths, key=lambda p: os.path.getmtime(p))
-            
-            if debug:
-                print("Files sorted by time (oldest first):", sorted_by_time)
-                
-            # Keep the oldest file, suggest deleting the newer ones
-            for p in sorted_by_time[1:]:
-                match_info[p] = sorted_by_time[0]  # Match with the oldest file
-            
-            files_to_delete.extend(sorted_by_time[1:])
+            # Scenario 2: All files have parentheses (or list was empty, though caught by `if not paths`)
+            # Keep the oldest among them.
+            paths.sort(key=lambda p: os.path.getmtime(p))
+            file_to_keep = paths[0]
+            current_group_files_to_delete.extend(paths[1:])
 
+        if debug:
+            print(f"File chosen to keep: {file_to_keep}")
+            print(f"Files in this group to delete: {current_group_files_to_delete}")
+
+        # Populate match_info for this group and add to overall deletion list
+        if file_to_keep: # Should always be true if paths is not empty
+            for f_del in current_group_files_to_delete:
+                if f_del == file_to_keep: # Should not happen with correct logic
+                    if debug: print(f"Error: File to keep ({file_to_keep}) is also in deletion list ({f_del})")
+                    continue
+                match_info[f_del] = file_to_keep
+                all_files_to_delete.append(f_del)
+    
     if debug:
-        print("Files to delete after prioritization:", files_to_delete)
-
-    return files_to_delete, match_info
+        print("\nFinal files_to_delete list:", all_files_to_delete)
+        print("Final match_info map:", match_info)
+        
+    return all_files_to_delete, match_info
 
 
 def get_file_info(file_path):
     """Get detailed file information including size and modification time."""
     try:
-        size = get_file_size(file_path)
+        # Get raw size in bytes
+        raw_size = os.path.getsize(file_path)
+        # Convert to human-readable format
+        size_str = get_human_size(raw_size)
         mtime = os.path.getmtime(file_path)
         mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
-        return f"{size}, modified: {mtime_str}"
+        return f"{size_str}, modified: {mtime_str}"
     except (PermissionError, OSError):
+        # This will catch errors from os.path.getsize() or os.path.getmtime()
         return "Unknown info"
 
 
 def get_user_choice(files):
-    """Show files to user and ask them what to delete."""
-    # Sort files by modification time, oldest first
-    sorted_files = sorted(files, key=lambda p: os.path.getmtime(p))
-    
-    print("\nFiles in this group:")
-    
-    for i, file in enumerate(sorted_files, 1):
-        file_info = get_file_info(file)
-        # Mark the oldest file
-        if i == 1:
-            print(f"{i}: {file} ({file_info}) [oldest]")
+    """Show files to user and ask them what to delete, highlighting a recommended file to keep."""
+    if not files:
+        return []
+
+    # Determine the recommended file to keep
+    with_paren = []
+    without_paren = []
+    for p in files:
+        if any(char in '()' for char in os.path.basename(p)):
+            with_paren.append(p)
         else:
-            print(f"{i}: {file} ({file_info})")
+            without_paren.append(p)
+
+    best_file_to_keep = None
+    # Sort by modification time for consistent ordering in choice list
+    # and for finding the oldest if needed.
+    # We still need sorted_files for presenting the numbered list.
+    # The best_file_to_keep logic should use unsorted lists then sort them.
+    
+    temp_sorted_files = sorted(files, key=lambda p: os.path.getmtime(p))
+
+
+    if without_paren:
+        without_paren.sort(key=lambda p: os.path.getmtime(p))
+        best_file_to_keep = without_paren[0]
+    else:
+        # All files have parentheses or the list was initially empty (filtered by `if not files`)
+        # Sort all files by modification time and pick the oldest.
+        # This re-uses temp_sorted_files which is already sorted.
+        if temp_sorted_files:
+             best_file_to_keep = temp_sorted_files[0]
+
+    print("\nFiles in this group:")
+    # Present files sorted by original logic (oldest first overall) for user display
+    # This is what sorted_files was doing.
+    # Let's ensure the displayed list is consistently sorted, e.g. by path:
+    # No, user expects oldest first. So temp_sorted_files is what we should enumerate.
+    
+    for i, file_path in enumerate(temp_sorted_files, 1):
+        file_info = get_file_info(file_path)
+        marker = ""
+        if file_path == best_file_to_keep:
+            marker = "[recommended to keep]"
+        elif i == 1 and best_file_to_keep is None: 
+            # Fallback if best_file_to_keep logic somehow failed, mark absolute oldest
+            # This also covers the case where all files are without_paren and best_file_to_keep is temp_sorted_files[0]
+             marker = "[oldest, consider keeping]" # Should be covered by recommended
+        
+        # If best_file_to_keep is the first in sorted list, marker will be set.
+        # If not, and it's the first, it means it's not the recommended one.
+        # The logic for [oldest] is now superseded by [recommended to keep]
+        # if best_file_to_keep is indeed the oldest.
+        print(f"{i}: {file_path} ({file_info}) {marker}")
 
     while True:
         try:
-            options = "/".join([str(i) for i in range(1, len(sorted_files)+1)])
-            choice = input(f"\nWhich file(s) would you like to DELETE? (Enter numbers, 'all' except oldest, 'none' to keep all): ").strip().lower()
+            # options_str = "/".join([str(i) for i in range(1, len(temp_sorted_files)+1)])
+            # Prompt should reflect new 'all' behavior
+            prompt_message = (
+                f"\nWhich file(s) would you like to DELETE? "
+                f"(Enter numbers, 'all' except recommended, 'none' to keep all): "
+            )
+            choice = input(prompt_message).strip().lower()
             
             if choice == 'all':
-                # Delete all except the oldest
-                return sorted_files[1:]
+                # Delete all except the best_file_to_keep
+                if best_file_to_keep:
+                    return [f for f in temp_sorted_files if f != best_file_to_keep]
+                else: # Should not happen if files list is not empty
+                    return temp_sorted_files[1:] if len(temp_sorted_files) > 1 else []
                 
             if choice == 'none' or choice == 'n' or choice == '':
                 # Keep all files
@@ -457,12 +520,33 @@ def interactive_delete(duplicates, follow_links=False):
             
             # Try to get the first few bytes of the file to help identify it
             with open(sample_file, 'rb') as f:
-                # Read up to 100 bytes
-                sample = f.read(min(100, file_size))
-                if all(32 <= byte <= 126 for byte in sample):  # Check if ASCII printable
-                    print(f"Content sample: {sample.decode('utf-8', errors='replace')[:60]}...")
-        except Exception:
-            pass  # Skip showing sample on error
+                sample_bytes = f.read(min(CONTENT_SAMPLE_SIZE, file_size))
+            
+            if sample_bytes:
+                try:
+                    # Try to decode as UTF-8
+                    decoded_sample = sample_bytes.decode('utf-8', errors='replace')
+                    
+                    # Count replacement characters
+                    num_bytes = len(sample_bytes)
+                    replacement_char_count = decoded_sample.count('\uFFFD')
+                    
+                    # If more than 25% of original bytes led to replacement characters (or if sample is very short and has any)
+                    # or if the decoded sample is empty (which can happen for some binary sequences)
+                    if not decoded_sample.strip() or (num_bytes > 0 and replacement_char_count / num_bytes > 0.25) or \
+                       (num_bytes <= 4 and replacement_char_count > 0): # Heuristic for very short files
+                        print("Content sample: (Binary file or unrenderable content)")
+                    else:
+                        # Show up to 60 characters of the decoded sample
+                        print(f"Content sample: {decoded_sample[:60].replace(chr(0), '[NUL]').strip()}...")
+                except Exception:
+                    # Catch any other decoding related errors, though decode with 'replace' is quite robust
+                    print("Content sample: (Error during content preview)")
+            else:
+                print("Content sample: (File is empty or very short)")
+                
+        except Exception as e:
+            print(f"Could not display content sample: {e}") # More specific error for sample reading
         
         try:
             # Get user's choice of which files to delete
@@ -482,7 +566,7 @@ def interactive_delete(duplicates, follow_links=False):
                         try:
                             # Skip symlinks if not following them
                             if os.path.islink(file) and not follow_links:
-                                print(f"Skipping symlink: {file}")
+                                print(f"Skipping symlink (not following): {file}")
                                 continue
                             
                             # Get file size before deletion
@@ -546,12 +630,39 @@ def main(directory, interactive=False, debug=False, verbose=False, follow_links=
             if files_to_delete:
                 print("Files proposed for deletion:")
                 for file in files_to_delete:
-                    file_size = get_file_size(file)
+                    try:
+                        raw_size = os.path.getsize(file)
+                        file_size_str = get_human_size(raw_size)
+                    except (PermissionError, OSError):
+                        file_size_str = "Unknown size"
+                    
                     if file in match_info:
-                        matching_file = match_info[file]
-                        print(f"{file} (duplicate of: {matching_file} ({file_size}))")
+                        kept_file = match_info[file]
+                        reason_paren = any(char in '()' for char in os.path.basename(file)) and \
+                                       not any(char in '()' for char in os.path.basename(kept_file))
+                        
+                        reason_newer_str = ""
+                        try:
+                            is_newer = os.path.getmtime(file) > os.path.getmtime(kept_file)
+                            if is_newer and not reason_paren: # Prioritize parenthesis reason if applicable
+                                reason_newer_str = f" (newer than kept file: {os.path.basename(kept_file)})"
+                        except OSError:
+                            is_newer = False # Cannot determine, don't use this reason
+
+                        if reason_paren:
+                            reason_str = f" (has parentheses, keeping: {os.path.basename(kept_file)})"
+                        elif is_newer: # Redundant due to reason_newer_str but clear
+                            reason_str = f" (newer, keeping older: {os.path.basename(kept_file)})"
+                        else:
+                            # Fallback or if file to delete is older but kept file was better for other reasons (e.g. no parens)
+                            # Or if times are identical.
+                            reason_str = f" (duplicate of: {os.path.basename(kept_file)})"
+                            
+                        print(f"{file} (size: {file_size_str}) - will be deleted{reason_str}.")
+
                     else:
-                        print(f"{file}")  # Fallback if no match info
+                        # This case should ideally not be reached if prioritize_deletion populates match_info correctly
+                        print(f"{file} (size: {file_size_str}) - will be deleted (reason not determined).")
 
                 confirmation = input("Are you sure you want to delete these files? (y/n) ").strip().lower()
                 if confirmation == 'y':
@@ -618,44 +729,56 @@ Examples:
                         help="Show detailed progress including all files checked and MD5 sums")
         parser.add_argument('-L', '--follow-links', action='store_true',
                         help="Follow symbolic links when searching for files (default: don't follow)")
-        parser.add_argument('-s', '--min-size', type=str, default='0',
+        parser.add_argument('-s', '--min-size', type=parse_size, default=0,
                         help="Minimum file size to consider (e.g. '500K', '10M', '1.5G')")
 
-        # Parse known args first
-        args, remaining = parser.parse_known_args()
-        
-        # Check if we have arguments that might be joined like -s1M
-        processed_args = []
-        for arg in remaining:
-            if arg.startswith('-s') and len(arg) > 2 and not arg.startswith('--'):
-                # Split into -s and the value
-                processed_args.extend(['-s', arg[2:]])
+        # Pre-process sys.argv to handle joined short options like -s1M
+        # This must be done before parser.parse_args() or parser.parse_known_args()
+        _original_argv = sys.argv.copy() 
+        processed_argv = [_original_argv[0]] # Start with the script name
+        i = 1
+        while i < len(_original_argv):
+            arg = _original_argv[i]
+            # Check for -s<val> (e.g. -s1M, -s500K). Must be -s, then a digit.
+            if arg.startswith('-s') and len(arg) > 2 and not arg.startswith('--') and arg[2].isdigit():
+                processed_argv.append('-s')
+                processed_argv.append(arg[2:])
             else:
-                processed_args.append(arg)
-        
-        # Re-parse with processed arguments
-        if processed_args:
-            # Combine original known args with processed remaining args
-            import sys
-            sys.argv = [sys.argv[0]] + [f"--{k.replace('_', '-')}={v}" if not isinstance(v, bool) else f"--{k.replace('_', '-')}" if v else "" 
-                        for k, v in vars(args).items() if v and k != 'directory'] + processed_args
-            if args.directory != '.':
-                sys.argv.append(args.directory)
-            
-            # Re-parse all arguments
-            args = parser.parse_args()
+                processed_argv.append(arg)
+            i += 1
+        sys.argv = processed_argv
         
         try:
-            min_size_bytes = parse_size(args.min_size)
-        except ValueError as e:
-            print(f"Error with --min-size: {str(e)}")
-            print("Valid formats: '10B', '500K', '10M', '1.5G', etc.")
-            sys.exit(1)
+            # Parse all arguments once. 
+            # The pre-processing of sys.argv handles the -s<val> case.
+            # parse_size will be automatically called by argparse for the --min-size argument.
+            args = parser.parse_args()
+            # The value from args.min_size is already an integer (bytes) due to type=parse_size
+            min_size_bytes = args.min_size 
+            
+        except argparse.ArgumentError as e:
+            # This will catch errors from argparse, including those raised by parse_size
+            # if they are wrapped as ArgumentError. Typically, argparse will print
+            # its own error message and exit for type errors.
+            # Let's rely on argparse's default error handling.
+            # If parse_size raises ValueError, argparse formats it as:
+            # "usage: rmdup.py [-h] ... error: argument -s/--min-size: invalid parse_size value: 'XYZ'"
+            # and then exits. So, we might not even need a specific try-except here if
+            # the default behavior is acceptable.
+            # For now, let's keep a generic error exit.
+            # The parser itself will print the error.
+            sys.exit(1) 
+        except SystemExit as e:
+            # This catches --help or --version, or errors that cause argparse to exit.
+            sys.exit(e.code)
             
         main(args.directory, interactive=args.interactive, debug=args.debug, 
              verbose=args.verbose, follow_links=args.follow_links, min_size=min_size_bytes)
-        
-    except Exception as e:
-        print(f"Error: {str(e)}")
+
+    # Catch SystemExit separately to allow argparse's --help/error exits to function as expected.
+    except SystemExit as e:
+        sys.exit(e.code)
+    except Exception as e: # General catch-all for other unexpected errors
+        print(f"An unexpected error occurred: {str(e)}", file=sys.stderr)
         print("\nRun with -h for help information.")
         sys.exit(1)
